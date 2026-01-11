@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -8,7 +9,6 @@ const path = require('path');
 const db = require('./database');
 const authRoutes = require('./routes/auth');
 const GoogleDriveService = require('./utils/googleDrive');
-require('dotenv').config();
 
 console.log('🔍 Checking environment variables:');
 console.log('GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ Loaded' : '❌ Missing');
