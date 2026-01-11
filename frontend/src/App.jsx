@@ -17,23 +17,48 @@ const App = () => {
   const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
-    // Auto-login for development
-    handleLogin('juan.delacruz@lspu.edu.ph');
+    // Check for OAuth callback
+    const params = new URLSearchParams(window.location.search);
+    const userParam = params.get('user');
+    const error = params.get('error');
+
+    if (error) {
+      alert('Login failed: ' + error);
+      window.history.replaceState({}, document.title, '/');
+      return;
+    }
+
+    if (userParam) {
+      try {
+        const userData = JSON.parse(decodeURIComponent(userParam));
+        setUser(userData);
+        localStorage.setItem('user', JSON.stringify(userData));
+        window.history.replaceState({}, document.title, '/');
+        fetchIPCRData(userData.id);
+        fetchDocuments(userData.id);
+      } catch (e) {
+        console.error('Error parsing user data:', e);
+      }
+    } else {
+      // Check localStorage for existing user
+      const savedUser = localStorage.getItem('user');
+      if (savedUser) {
+        const userData = JSON.parse(savedUser);
+        setUser(userData);
+        fetchIPCRData(userData.id);
+        fetchDocuments(userData.id);
+      }
+    }
   }, []);
 
-  const handleLogin = async (email) => {
+  const handleGoogleLogin = async () => {
     try {
-      const response = await fetch(`${API_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
-      });
-      const userData = await response.json();
-      setUser(userData);
-      fetchIPCRData(userData.id);
-      fetchDocuments(userData.id);
+      const response = await fetch(`${API_URL}/auth/google`);
+      const data = await response.json();
+      window.location.href = data.authUrl;
     } catch (error) {
       console.error('Login error:', error);
+      alert('Failed to initiate login');
     }
   };
 
@@ -88,6 +113,11 @@ const App = () => {
     const formData = new FormData();
     files.forEach(file => formData.append('files', file));
     formData.append('userId', user.id);
+    
+    // Include tokens for Google Drive upload
+    if (user.tokens) {
+      formData.append('tokens', JSON.stringify(user.tokens));
+    }
 
     try {
       const response = await fetch(`${API_URL}/documents/upload`, {
@@ -98,7 +128,8 @@ const App = () => {
       const data = await response.json();
       
       if (data.success) {
-        alert(`✅ Successfully uploaded ${data.results.length} file(s)`);
+        const driveUploaded = data.results.filter(r => r.driveUploaded).length;
+        alert(`✅ Successfully uploaded ${data.results.length} file(s)\n${driveUploaded > 0 ? `📁 ${driveUploaded} uploaded to Google Drive` : '⚠️ Google Drive upload unavailable'}`);
         fetchIPCRData(user.id);
         fetchDocuments(user.id);
       }
@@ -111,6 +142,7 @@ const App = () => {
   };
 
   const handleLogout = () => {
+    localStorage.removeItem('user');
     setUser(null);
     setCurrentPage('login');
   };
@@ -124,21 +156,29 @@ const App = () => {
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
         <div className="bg-white rounded-lg shadow-xl p-8 max-w-md w-full">
           <div className="text-center mb-8">
+            <div className="bg-blue-600 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+              <FileText className="w-8 h-8 text-white" />
+            </div>
             <h1 className="text-3xl font-bold text-gray-800 mb-2">IPCR System</h1>
             <p className="text-gray-600">Laguna State Polytechnic University</p>
           </div>
+          
           <button
-            onClick={() => handleLogin('juan.delacruz@lspu.edu.ph')}
-            className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2"
+            onClick={handleGoogleLogin}
+            className="w-full bg-white border-2 border-gray-300 text-gray-700 py-3 px-4 rounded-lg hover:bg-gray-50 transition flex items-center justify-center gap-3 font-medium"
           >
-            <svg className="w-5 h-5" viewBox="0 0 24 24">
-              <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-              <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-              <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-              <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+            <svg className="w-6 h-6" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
             </svg>
             Sign in with Google
           </button>
+
+          <p className="text-xs text-gray-500 text-center mt-4">
+            Use your LSPU Google account to login
+          </p>
         </div>
       </div>
     );
@@ -164,9 +204,17 @@ const App = () => {
                 <p className="text-sm font-medium text-gray-800">{user.name}</p>
                 <p className="text-xs text-gray-500">{user.role === 'admin' ? 'Dean' : 'Professor'}</p>
               </div>
+              {user.profileImage ? (
+                <img src={user.profileImage} alt={user.name} className="w-10 h-10 rounded-full" />
+              ) : (
+                <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold">
+                  {user.name.split(' ').map(n => n[0]).join('')}
+                </div>
+              )}
               <button
                 onClick={handleLogout}
                 className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition"
+                title="Logout"
               >
                 <LogOut className="w-5 h-5" />
               </button>
@@ -221,6 +269,29 @@ const App = () => {
         {/* Dashboard Page */}
         {currentPage === 'dashboard' && (
           <div className="space-y-6">
+            {/* Google Drive Status */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-center gap-3">
+                {user.tokens ? (
+                  <>
+                    <CheckCircle className="w-5 h-5 text-green-600" />
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">Google Drive Connected</p>
+                      <p className="text-xs text-gray-600">Documents will be automatically uploaded to your Drive</p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-5 h-5 rounded-full border-2 border-yellow-500"></div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-800">Google Drive Not Connected</p>
+                      <p className="text-xs text-gray-600">Documents will only be stored locally</p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
             {/* Overall Rating Card */}
             <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-lg shadow-lg p-8 text-white">
               <div className="flex items-center justify-between">
@@ -269,7 +340,6 @@ const App = () => {
                         <span className="font-semibold text-blue-600">{data.accomplished}</span>
                       </div>
                       
-                      {/* Progress Bar */}
                       <div className="pt-2">
                         <div className="w-full bg-gray-200 rounded-full h-2">
                           <div
@@ -318,13 +388,13 @@ const App = () => {
         {/* Upload Page */}
         {currentPage === 'upload' && (
           <div className="space-y-6">
-            {/* Upload Area */}
             <div className="bg-white rounded-lg shadow-sm p-8 border-2 border-dashed border-gray-300">
               <div className="text-center">
                 <Upload className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-lg font-semibold text-gray-800 mb-2">Upload IPCR Documents</h3>
                 <p className="text-gray-600 mb-6">
-                  Upload PDF files. They will be automatically categorized using AI.
+                  Upload PDF files. They will be automatically categorized using AI
+                  {user.tokens && ' and uploaded to your Google Drive.'}
                 </p>
                 <label className="inline-block">
                   <input
@@ -336,13 +406,12 @@ const App = () => {
                     disabled={isUploading}
                   />
                   <span className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition cursor-pointer inline-block">
-                    {isUploading ? '⏳ Processing...' : '📁 Select Files'}
+                    {isUploading ? '⏳ Processing...' : '📁 Select PDF Files'}
                   </span>
                 </label>
               </div>
             </div>
 
-            {/* Upload Progress */}
             {isUploading && (
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                 <div className="flex items-center gap-3">
@@ -352,7 +421,6 @@ const App = () => {
               </div>
             )}
 
-            {/* Uploaded Files List */}
             {uploadedFiles.length > 0 && (
               <div className="bg-white rounded-lg shadow-sm border border-gray-200">
                 <div className="p-4 border-b border-gray-200">
@@ -379,13 +447,27 @@ const App = () => {
                               }`}>
                                 {file.category}
                               </span>
-                              <span className="text-xs text-gray-500">
-                                {file.confidence ? `${file.confidence.toFixed(1)}% confidence` : ''}
-                              </span>
+                              {file.confidence && (
+                                <span className="text-xs text-gray-500">
+                                  {file.confidence.toFixed(1)}% confidence
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
-                        <CheckCircle className="w-5 h-5 text-green-600" />
+                        <div className="flex items-center gap-2">
+                          <CheckCircle className="w-5 h-5 text-green-600" />
+                          {file.driveLink && (
+                            <a
+                              href={file.driveLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                            >
+                              View in Drive
+                            </a>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -403,9 +485,13 @@ const App = () => {
               
               <div className="space-y-6">
                 <div className="flex items-center gap-6">
-                  <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center text-white text-3xl font-bold">
-                    {user.name.split(' ').map(n => n[0]).join('')}
-                  </div>
+                  {user.profileImage ? (
+                    <img src={user.profileImage} alt={user.name} className="w-24 h-24 rounded-full" />
+                  ) : (
+                    <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center text-white text-3xl font-bold">
+                      {user.name.split(' ').map(n => n[0]).join('')}
+                    </div>
+                  )}
                   <div>
                     <h3 className="text-xl font-semibold text-gray-800">{user.name}</h3>
                     <p className="text-gray-600">{user.department}</p>
@@ -426,6 +512,23 @@ const App = () => {
                   <div>
                     <label className="text-sm font-medium text-gray-700">Department</label>
                     <p className="mt-1 text-gray-800">{user.department}</p>
+                  </div>
+                  
+                  <div>
+                    <label className="text-sm font-medium text-gray-700">Google Drive Status</label>
+                    <div className="mt-1 flex items-center gap-2">
+                      {user.tokens ? (
+                        <>
+                          <CheckCircle className="w-4 h-4 text-green-600" />
+                          <span className="text-gray-800">Connected</span>
+                        </>
+                      ) : (
+                        <>
+                          <div className="w-4 h-4 rounded-full border-2 border-yellow-500"></div>
+                          <span className="text-gray-800">Not Connected</span>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

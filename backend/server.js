@@ -6,6 +6,14 @@ const FormData = require('form-data');
 const fs = require('fs-extra');
 const path = require('path');
 const db = require('./database');
+const authRoutes = require('./routes/auth');
+const GoogleDriveService = require('./utils/googleDrive');
+require('dotenv').config();
+
+console.log('🔍 Checking environment variables:');
+console.log('GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ Loaded' : '❌ Missing');
+console.log('GOOGLE_CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? '✅ Loaded' : '❌ Missing');
+console.log('GOOGLE_REDIRECT_URI:', process.env.GOOGLE_REDIRECT_URI);
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
@@ -16,44 +24,12 @@ app.use(express.json());
 // Ensure uploads directory exists
 fs.ensureDirSync('uploads');
 
+// Routes
+app.use('/api/auth', authRoutes);
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date() });
-});
-
-// Mock login (will be replaced with Google OAuth)
-app.post('/api/auth/login', (req, res) => {
-  const { email } = req.body;
-  
-  db.get('SELECT * FROM users WHERE email = ?', [email], (err, user) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    
-    if (!user) {
-      // Create new user
-      const insertQuery = `
-        INSERT INTO users (google_id, email, name, role, department)
-        VALUES (?, ?, ?, ?, ?)
-      `;
-      
-      db.run(insertQuery, ['mock-id', email, 'Dr. Juan Dela Cruz', 'professor', 'Computer Science'], function(err) {
-        if (err) {
-          return res.status(500).json({ error: err.message });
-        }
-        
-        res.json({
-          id: this.lastID,
-          email,
-          name: 'Dr. Juan Dela Cruz',
-          role: 'professor',
-          department: 'Computer Science'
-        });
-      });
-    } else {
-      res.json(user);
-    }
-  });
 });
 
 // Get IPCR data
@@ -127,20 +103,28 @@ app.post('/api/ipcr/targets', (req, res) => {
   res.json({ success: true });
 });
 
-// Upload documents
+// Upload documents with Google Drive integration
 app.post('/api/documents/upload', upload.array('files'), async (req, res) => {
   try {
-    const { userId } = req.body;
+    const { userId, tokens } = req.body;
     const files = req.files;
     
     if (!files || files.length === 0) {
       return res.status(400).json({ error: 'No files uploaded' });
     }
 
+    // Parse tokens if it's a string
+    let userTokens = null;
+    if (tokens) {
+      userTokens = typeof tokens === 'string' ? JSON.parse(tokens) : tokens;
+    }
+
     const results = [];
 
     for (const file of files) {
       try {
+        console.log(`\n📄 Processing: ${file.originalname}`);
+
         // Send to ML service for classification
         const formData = new FormData();
         formData.append('file', fs.createReadStream(file.path), {
@@ -154,10 +138,27 @@ app.post('/api/documents/upload', upload.array('files'), async (req, res) => {
         });
 
         const { category, confidence } = mlResponse.data;
+        console.log(`✅ Classification: ${category} (${confidence.toFixed(2)}% confidence)`);
 
-        // Mock Google Drive upload (you'll implement real one later)
-        const mockDriveId = Math.random().toString(36).substring(7);
-        const mockDriveLink = `https://drive.google.com/file/d/${mockDriveId}`;
+        // Upload to Google Drive if tokens are available
+        let driveResult = null;
+        if (userTokens) {
+          try {
+            const driveService = new GoogleDriveService(userTokens);
+            driveResult = await driveService.uploadFile(
+              file.path,
+              file.originalname,
+              category
+            );
+          } catch (driveError) {
+            console.error('⚠️ Google Drive upload failed:', driveError.message);
+            // Continue without Drive upload
+          }
+        }
+
+        // Use Drive link or create mock link
+        const driveId = driveResult ? driveResult.fileId : Math.random().toString(36).substring(7);
+        const driveLink = driveResult ? driveResult.webViewLink : `https://drive.google.com/file/d/${driveId}`;
 
         // Save to database
         const insertDocQuery = `
@@ -165,7 +166,7 @@ app.post('/api/documents/upload', upload.array('files'), async (req, res) => {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
-        db.run(insertDocQuery, [userId, file.filename, file.originalname, file.size, category, confidence, mockDriveId, mockDriveLink]);
+        db.run(insertDocQuery, [userId, file.filename, file.originalname, file.size, category, confidence, driveId, driveLink]);
 
         // Update IPCR records
         const updateQuery = `
@@ -182,13 +183,14 @@ app.post('/api/documents/upload', upload.array('files'), async (req, res) => {
           filename: file.originalname,
           category,
           confidence,
-          driveLink: mockDriveLink
+          driveLink,
+          driveUploaded: !!driveResult
         });
 
         // Clean up uploaded file
         await fs.remove(file.path);
       } catch (fileError) {
-        console.error(`Error processing ${file.originalname}:`, fileError.message);
+        console.error(`❌ Error processing ${file.originalname}:`, fileError.message);
         // Clean up on error
         if (fs.existsSync(file.path)) {
           await fs.remove(file.path);
@@ -258,4 +260,5 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`✅ Backend server running on http://localhost:${PORT}`);
   console.log(`📊 API endpoints available at http://localhost:${PORT}/api`);
+  console.log(`🔐 Google OAuth configured: ${!!process.env.GOOGLE_CLIENT_ID}`);
 });

@@ -1,3 +1,6 @@
 ml-service/*.pt
 ml-service/__pycache__/
 ml-service/venv/
+backend/.env
+backend/ipcr.db
+SETUP_GUIDE.md
