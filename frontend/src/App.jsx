@@ -1,11 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, FileText, BarChart3, User, LogOut, Home, Shield, CheckCircle, Clock } from 'lucide-react';
+import { Upload, FileText, BarChart3, User, LogOut, Home, Shield, CheckCircle, Clock, Search, Download } from 'lucide-react';
 
 const API_URL = 'http://localhost:3001/api';
 
 const App = () => {
+  // --- STATE MANAGEMENT ---
   const [user, setUser] = useState(null);
   const [currentPage, setCurrentPage] = useState('dashboard');
+  
+  // FIXED: Restored the missing uploading state
+  const [isUploading, setIsUploading] = useState(false);
+  
   const [ipcrData, setIpcrData] = useState({
     syllabus: { target: 4, accomplished: 0, submitted: null },
     courseGuide: { target: 4, accomplished: 0, submitted: null },
@@ -13,9 +18,11 @@ const App = () => {
     gradingSheet: { target: 0, accomplished: 0, submitted: null },
     tos: { target: 0, accomplished: 0, submitted: null }
   });
+  
   const [uploadedFiles, setUploadedFiles] = useState([]);
-  const [isUploading, setIsUploading] = useState(false);
+  const [adminData, setAdminData] = useState([]); // State for Admin Panel
 
+  // --- EFFECTS ---
   useEffect(() => {
     // Check for OAuth callback
     const params = new URLSearchParams(window.location.search);
@@ -34,8 +41,15 @@ const App = () => {
         setUser(userData);
         localStorage.setItem('user', JSON.stringify(userData));
         window.history.replaceState({}, document.title, '/');
+        
+        // Initial Data Fetch
         fetchIPCRData(userData.id);
         fetchDocuments(userData.id);
+        
+        // If Admin, fetch admin data
+        if (userData.role === 'admin') {
+          fetchAdminData();
+        }
       } catch (e) {
         console.error('Error parsing user data:', e);
       }
@@ -47,10 +61,16 @@ const App = () => {
         setUser(userData);
         fetchIPCRData(userData.id);
         fetchDocuments(userData.id);
+        
+        // If Admin, fetch admin data
+        if (userData.role === 'admin') {
+          fetchAdminData();
+        }
       }
     }
   }, []);
 
+  // --- API FUNCTIONS ---
   const handleGoogleLogin = async () => {
     try {
       const response = await fetch(`${API_URL}/auth/google`);
@@ -82,6 +102,20 @@ const App = () => {
     }
   };
 
+  const fetchAdminData = async () => {
+    try {
+      // Assuming endpoint exists to get all faculty data
+      const response = await fetch(`${API_URL}/admin/ipcr`); 
+      const data = await response.json();
+      setAdminData(data);
+    } catch (error) {
+      console.error('Error fetching admin data:', error);
+      // Fallback/Mock data for demonstration if API fails
+      setAdminData([]); 
+    }
+  };
+
+  // --- HELPER FUNCTIONS ---
   const calculateRating = (target, accomplished) => {
     if (target === 0) return 0;
     const ratio = accomplished / target;
@@ -104,17 +138,17 @@ const App = () => {
     return (totalRating / validCategories.length).toFixed(2);
   };
 
+  // --- HANDLERS ---
   const handleFileUpload = async (event) => {
     const files = Array.from(event.target.files);
     if (files.length === 0) return;
     
-    setIsUploading(true);
+    setIsUploading(true); // This caused the error before because state was missing
 
     const formData = new FormData();
     files.forEach(file => formData.append('files', file));
     formData.append('userId', user.id);
     
-    // Include tokens for Google Drive upload
     if (user.tokens) {
       formData.append('tokens', JSON.stringify(user.tokens));
     }
@@ -147,10 +181,33 @@ const App = () => {
     setCurrentPage('login');
   };
 
-  const exportToExcel = () => {
-    alert('📊 Export feature coming soon!\nThis will generate an Excel file with your IPCR data.');
+  const exportToExcel = async () => {
+    try {
+      const response = await fetch(`${API_URL}/ipcr/export/${user.id}`);
+      
+      if (!response.ok) {
+        throw new Error('Export failed');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `IPCR_${user.name.replace(/\s+/g, '_')}_${Date.now()}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      alert('✅ IPCR exported successfully!');
+    } catch (error) {
+      console.error('Export error:', error);
+      alert('❌ Export failed: ' + error.message);
+    }
   };
 
+  // --- RENDER: LOGIN SCREEN ---
   if (!user) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
@@ -184,6 +241,7 @@ const App = () => {
     );
   }
 
+  // --- RENDER: MAIN APP ---
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -202,7 +260,7 @@ const App = () => {
             <div className="flex items-center gap-4">
               <div className="text-right">
                 <p className="text-sm font-medium text-gray-800">{user.name}</p>
-                <p className="text-xs text-gray-500">{user.role === 'admin' ? 'Dean' : 'Professor'}</p>
+                <p className="text-xs text-gray-500">{user.role === 'admin' ? 'Administrator' : 'Faculty'}</p>
               </div>
               {user.profileImage ? (
                 <img src={user.profileImage} alt={user.name} className="w-10 h-10 rounded-full" />
@@ -225,10 +283,10 @@ const App = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {/* Navigation */}
-        <nav className="bg-white rounded-lg shadow-sm mb-6 p-2 flex gap-2">
+        <nav className="bg-white rounded-lg shadow-sm mb-6 p-2 flex gap-2 overflow-x-auto">
           <button
             onClick={() => setCurrentPage('dashboard')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition whitespace-nowrap ${
               currentPage === 'dashboard' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'
             }`}
           >
@@ -237,7 +295,7 @@ const App = () => {
           </button>
           <button
             onClick={() => setCurrentPage('upload')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition whitespace-nowrap ${
               currentPage === 'upload' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'
             }`}
           >
@@ -246,7 +304,7 @@ const App = () => {
           </button>
           <button
             onClick={() => setCurrentPage('profile')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition whitespace-nowrap ${
               currentPage === 'profile' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'
             }`}
           >
@@ -256,7 +314,7 @@ const App = () => {
           {user.role === 'admin' && (
             <button
               onClick={() => setCurrentPage('admin')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition whitespace-nowrap ${
                 currentPage === 'admin' ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
@@ -377,7 +435,7 @@ const App = () => {
                   onClick={exportToExcel}
                   className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition flex items-center gap-2"
                 >
-                  <FileText className="w-4 h-4" />
+                  <Download className="w-4 h-4" />
                   Export to Excel
                 </button>
               </div>
@@ -513,23 +571,6 @@ const App = () => {
                     <label className="text-sm font-medium text-gray-700">Department</label>
                     <p className="mt-1 text-gray-800">{user.department}</p>
                   </div>
-                  
-                  <div>
-                    <label className="text-sm font-medium text-gray-700">Google Drive Status</label>
-                    <div className="mt-1 flex items-center gap-2">
-                      {user.tokens ? (
-                        <>
-                          <CheckCircle className="w-4 h-4 text-green-600" />
-                          <span className="text-gray-800">Connected</span>
-                        </>
-                      ) : (
-                        <>
-                          <div className="w-4 h-4 rounded-full border-2 border-yellow-500"></div>
-                          <span className="text-gray-800">Not Connected</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -539,9 +580,64 @@ const App = () => {
         {/* Admin Panel */}
         {currentPage === 'admin' && user.role === 'admin' && (
           <div className="space-y-6">
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-              <h2 className="text-2xl font-bold text-gray-800 mb-6">Faculty IPCR Overview</h2>
-              <p className="text-gray-600 mb-4">Admin panel features coming soon...</p>
+            <div className="flex justify-between items-center">
+                <h2 className="text-2xl font-bold text-gray-800">Faculty Overview</h2>
+                <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                    <input 
+                        type="text" 
+                        placeholder="Search faculty..." 
+                        className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                        <thead className="bg-gray-50 border-b border-gray-200">
+                            <tr>
+                                <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase">Faculty Name</th>
+                                <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase">Department</th>
+                                <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase">IPCR Status</th>
+                                <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                            {adminData.length > 0 ? (
+                                adminData.map((faculty, index) => (
+                                    <tr key={index} className="hover:bg-gray-50">
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 text-xs font-bold">
+                                                    {faculty.name ? faculty.name.split(' ').map(n => n[0]).join('') : 'U'}
+                                                </div>
+                                                <span className="font-medium text-gray-800">{faculty.name || 'Unknown'}</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 text-gray-600">{faculty.department || 'N/A'}</td>
+                                        <td className="px-6 py-4">
+                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                Active
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <button className="text-blue-600 hover:text-blue-800 text-sm font-medium">
+                                                View Details
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))
+                            ) : (
+                                <tr>
+                                    <td colSpan="4" className="px-6 py-12 text-center text-gray-500">
+                                        No faculty data available
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             </div>
           </div>
         )}

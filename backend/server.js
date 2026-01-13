@@ -1,4 +1,13 @@
+// Load environment variables FIRST
 require('dotenv').config();
+
+// Debug environment variables (remove after testing)
+console.log('\n🔍 Environment Variables Check:');
+console.log('GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ Loaded' : '❌ MISSING');
+console.log('GOOGLE_CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? '✅ Loaded' : '❌ MISSING');
+console.log('GOOGLE_REDIRECT_URI:', process.env.GOOGLE_REDIRECT_URI || '❌ MISSING');
+console.log('');
+
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -9,11 +18,6 @@ const path = require('path');
 const db = require('./database');
 const authRoutes = require('./routes/auth');
 const GoogleDriveService = require('./utils/googleDrive');
-
-console.log('🔍 Checking environment variables:');
-console.log('GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID ? '✅ Loaded' : '❌ Missing');
-console.log('GOOGLE_CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? '✅ Loaded' : '❌ Missing');
-console.log('GOOGLE_REDIRECT_URI:', process.env.GOOGLE_REDIRECT_URI);
 
 const app = express();
 const upload = multer({ dest: 'uploads/' });
@@ -223,6 +227,73 @@ app.get('/api/documents/:userId', (req, res) => {
     }
     res.json(rows);
   });
+});
+
+// Export IPCR to Excel
+app.get('/api/ipcr/export/:userId', async (req, res) => {
+  const { userId } = req.params;
+  
+  try {
+    // Get user data
+    const user = await new Promise((resolve, reject) => {
+      db.get('SELECT * FROM users WHERE id = ?', [userId], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Get IPCR data
+    const ipcrRecords = await new Promise((resolve, reject) => {
+      db.all('SELECT * FROM ipcr_records WHERE user_id = ?', [userId], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
+      });
+    });
+
+    // Transform data to match frontend format
+    const ipcrData = {
+      syllabus: { target: 4, accomplished: 0, submitted: null },
+      courseGuide: { target: 4, accomplished: 0, submitted: null },
+      slm: { target: 10, accomplished: 0, submitted: null },
+      gradingSheet: { target: 0, accomplished: 0, submitted: null },
+      tos: { target: 0, accomplished: 0, submitted: null }
+    };
+
+    ipcrRecords.forEach(record => {
+      const categoryMap = {
+        'Syllabus': 'syllabus',
+        'Course Guide': 'courseGuide',
+        'SLM': 'slm',
+        'Grading Sheet': 'gradingSheet',
+        'TOS': 'tos'
+      };
+      const key = categoryMap[record.category];
+      if (key) {
+        ipcrData[key] = {
+          target: record.target,
+          accomplished: record.accomplished,
+          submitted: record.submission_date
+        };
+      }
+    });
+
+    // Generate Excel
+    const { exportIPCRToExcel } = require('./utils/excelExport');
+    const buffer = await exportIPCRToExcel(ipcrData, user);
+
+    // Send file
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=IPCR_${user.name.replace(/\s+/g, '_')}_${Date.now()}.xlsx`);
+    res.send(buffer);
+
+  } catch (error) {
+    console.error('Excel export error:', error);
+    res.status(500).json({ error: 'Failed to generate Excel file' });
+  }
 });
 
 // Admin: Get all users' IPCR
